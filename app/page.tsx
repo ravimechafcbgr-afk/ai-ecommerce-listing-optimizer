@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
 type Listing = {
   title: string;
   bullets: string[];
@@ -18,6 +21,43 @@ export default function Home() {
   const [generated, setGenerated] = useState<Listing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageData, setImageData] = useState<string | null>(null);
+  const [imageMimeType, setImageMimeType] = useState<string | null>(null);
+
+  function handleImageChange(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+      setError("Please upload a JPG, JPEG, PNG or WEBP image.");
+      return;
+    }
+
+    if (file.size > MAX_IMAGE_SIZE) {
+      setError("Please upload an image smaller than 5 MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        setError("Unable to read that image. Please try another file.");
+        return;
+      }
+
+      setImagePreview(reader.result);
+      setImageData(reader.result.split(",")[1] || null);
+      setImageMimeType(file.type);
+      setGenerated(null);
+      setError(null);
+    };
+    reader.onerror = () => {
+      setError("Unable to read that image. Please try another file.");
+    };
+    reader.readAsDataURL(file);
+  }
 
   async function generateListing() {
     if (!productName.trim()) {
@@ -39,6 +79,9 @@ export default function Home() {
           category: category.trim() || "General",
           features,
           marketplace,
+          image: imageData
+            ? { data: imageData, mimeType: imageMimeType }
+            : null,
         }),
       });
 
@@ -182,6 +225,38 @@ export default function Home() {
                 <p className="mt-2 text-xs text-slate-500">
                   Add one feature per line for better results.
                 </p>
+              </div>
+
+              {/* Product Image */}
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">
+                  Product image <span className="text-slate-500">(optional)</span>
+                </label>
+
+                <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-white/15 bg-slate-900 px-4 py-5 text-center transition hover:border-blue-400/60">
+                  <span className="text-sm font-medium text-slate-300">
+                    {imagePreview ? "Choose a different image" : "Upload product image"}
+                  </span>
+                  <span className="mt-1 text-xs text-slate-500">
+                    JPG, PNG or WEBP up to 5 MB
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="sr-only"
+                    onChange={(e) => handleImageChange(e.target.files?.[0])}
+                  />
+                </label>
+
+                {imagePreview ? (
+                  <div className="mt-3 overflow-hidden rounded-xl border border-white/10 bg-slate-900">
+                    <img
+                      src={imagePreview}
+                      alt="Selected product"
+                      className="max-h-48 w-full object-contain"
+                    />
+                  </div>
+                ) : null}
               </div>
 
               {/* Marketplace */}
