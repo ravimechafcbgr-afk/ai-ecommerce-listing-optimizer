@@ -6,6 +6,115 @@ export type ListingResponse = {
   score: number;
 };
 
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+const ACCEPTED_IMAGE_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+const GEMINI_ENDPOINT =
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent";
+
+type GeminiResponse = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{ text?: string }>;
+    };
+  }>;
+};
+
+type GeminiErrorBody = {
+  error?: {
+    status?: string;
+    message?: string;
+  };
+};
+
+class GeminiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number
+  ) {
+    super(message);
+    this.name = "GeminiRequestError";
+  }
+}
+
+function isTemporaryGeminiError(statusCode: number, status?: string) {
+  return statusCode === 503 || status === "UNAVAILABLE";
+}
+
+function getGeminiErrorMessage(statusCode: number, status?: string) {
+  if (isTemporaryGeminiError(statusCode, status)) {
+    return "Gemini is temporarily unavailable. Please try again in a moment.";
+  }
+
+  if (statusCode === 401 || status === "UNAUTHENTICATED") {
+    return "Gemini authentication failed. Please check the server API configuration.";
+  }
+
+  if (statusCode === 400 || status === "INVALID_ARGUMENT") {
+    return "Gemini could not process this request. Please check the product details or image and try again.";
+  }
+
+  if (statusCode === 413) {
+    return "The request is too large. Please use a smaller image or less text.";
+  }
+
+  return "Gemini could not generate the listing right now. Please try again later.";
+}
+
+async function requestGemini(
+  apiKey: string,
+  contentParts: Array<Record<string, unknown>>
+): Promise<GeminiResponse> {
+  const retryDelays = [300, 700];
+
+  for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
+    const response = await fetch(GEMINI_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: contentParts,
+          },
+        ],
+        generationConfig: {
+          temperature: 0.7,
+          responseMimeType: "application/json",
+        },
+      }),
+    });
+
+    if (response.ok) {
+      return (await response.json()) as GeminiResponse;
+    }
+
+    const errorBody = (await response.json().catch(() => null)) as GeminiErrorBody | null;
+    const errorStatus = errorBody?.error?.status;
+    const shouldRetry = isTemporaryGeminiError(response.status, errorStatus);
+
+    if (shouldRetry && attempt < retryDelays.length) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]));
+      continue;
+    }
+
+    throw new GeminiRequestError(
+      getGeminiErrorMessage(response.status, errorStatus),
+      shouldRetry ? 503 : response.status
+    );
+  }
+
+  throw new GeminiRequestError(
+    "Gemini could not generate the listing right now. Please try again later.",
+    503
+  );
+}
+
 function normalizeText(value: unknown, fallback: string) {
   if (typeof value !== "string") {
     return fallback;
@@ -96,6 +205,7 @@ export async function POST(request: Request) {
     const category = normalizeText(body?.category, "General");
     const marketplace = normalizeText(body?.marketplace, "Amazon");
     const featureInput = typeof body?.features === "string" ? body.features : "";
+    const image = body?.image;
 
     if (!productName) {
       return Response.json(
@@ -118,10 +228,40 @@ export async function POST(request: Request) {
       .filter((item: string) => Boolean(item))
       .slice(0, 8);
 
+    if (image !== null && image !== undefined) {
+      if (
+        typeof image !== "object" ||
+        typeof image.data !== "string" ||
+        typeof image.mimeType !== "string"
+      ) {
+        return Response.json(
+          { error: "The uploaded image could not be processed." },
+          { status: 400 }
+        );
+      }
+
+      if (!ACCEPTED_IMAGE_TYPES.has(image.mimeType)) {
+        return Response.json(
+          { error: "Please upload a JPG, JPEG, PNG or WEBP image." },
+          { status: 400 }
+        );
+      }
+
+      const imageSize = Math.ceil((image.data.length * 3) / 4);
+      if (imageSize > MAX_IMAGE_SIZE) {
+        return Response.json(
+          { error: "Please upload an image smaller than 5 MB." },
+          { status: 400 }
+        );
+      }
+    }
+
     const prompt = `You are an expert ecommerce copywriter. Create a high-converting product listing for ${marketplace}. Use the following product details:
 - Product name: ${productName}
 - Category: ${category}
 - Key features: ${features.length > 0 ? features.join("; ") : "Premium quality, reliable performance, modern design, everyday convenience"}
+
+${image ? `Analyze the product image and use only visible, defensible details. Identify the visible product type, major visible features, colors, design/style, likely use case, and useful listing details visible in the image. Do not invent specifications that are not visible.` : "No product image was provided; rely on the written product details."}
 
 Return valid JSON only with this exact structure:
 {
@@ -138,42 +278,20 @@ Rules:
 - Keywords should be a single comma-separated string with 8-20 keywords.
 - Keep content natural, conversion-focused, and relevant to the product and marketplace.`;
 
-    const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": process.env.GEMINI_API_KEY!,
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [{ text: prompt }],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.7,
-            responseMimeType: "application/json",
-          },
-        }),
-      }
-    );
+    const contentParts: Array<Record<string, unknown>> = [
+      { text: prompt },
+    ];
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        errorText || "Gemini API request failed. Please try again later."
-      );
+    if (image) {
+      contentParts.push({
+        inlineData: {
+          mimeType: image.mimeType,
+          data: image.data,
+        },
+      });
     }
 
-    const geminiData = (await response.json()) as {
-      candidates?: Array<{
-        content?: {
-          parts?: Array<{ text?: string }>;
-        };
-      }>;
-    };
+    const geminiData = await requestGemini(apiKey, contentParts);
 
     const rawContent =
       geminiData.candidates?.[0]?.content?.parts
@@ -241,16 +359,18 @@ Rules:
 
     return Response.json(listing);
   } catch (error) {
-    console.error("Listing generation failed:", error);
-
-    return Response.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unable to generate the listing right now. Please try again.",
-      },
-      { status: 500 }
+    console.error(
+      "Listing generation failed:",
+      error instanceof Error ? error.message : "Unknown error"
     );
+
+    const statusCode =
+      error instanceof GeminiRequestError ? error.statusCode : 500;
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unable to generate the listing right now. Please try again.";
+
+    return Response.json({ error: message }, { status: statusCode });
   }
 }
