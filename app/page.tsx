@@ -28,10 +28,38 @@ export default function Home() {
   const [removeBackgroundLoading, setRemoveBackgroundLoading] = useState(false);
   const [backgroundRemovalError, setBackgroundRemovalError] = useState<string | null>(null);
   const [processedImagePreview, setProcessedImagePreview] = useState<string | null>(null);
+  const [processedImageData, setProcessedImageData] = useState<string | null>(null);
+  const [processedImageMimeType, setProcessedImageMimeType] = useState<string | null>(null);
   const [enhanceImageLoading, setEnhanceImageLoading] = useState(false);
   const [enhanceImageError, setEnhanceImageError] = useState<string | null>(null);
   const [enhancedImagePreview, setEnhancedImagePreview] = useState<string | null>(null);
+  const [enhancedImageData, setEnhancedImageData] = useState<string | null>(null);
+  const [enhancedImageMimeType, setEnhancedImageMimeType] = useState<string | null>(null);
   const [enhancedImageFromBackground, setEnhancedImageFromBackground] = useState(false);
+
+  const aiImageLabel = enhancedImageData
+    ? "Enhanced Image"
+    : processedImageData
+      ? "Background Removed Image"
+      : imageData
+        ? "Original Image"
+        : "No image";
+
+  function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result !== "string") {
+          reject(new Error("Unable to read the processed image."));
+          return;
+        }
+
+        resolve(reader.result);
+      };
+      reader.onerror = () => reject(new Error("Unable to read the processed image."));
+      reader.readAsDataURL(blob);
+    });
+  }
 
   function handleImageChange(file: File | undefined) {
     if (!file) {
@@ -60,8 +88,12 @@ export default function Home() {
       setImageData(reader.result.split(",")[1] || null);
       setImageMimeType(file.type);
       setProcessedImagePreview(null);
+      setProcessedImageData(null);
+      setProcessedImageMimeType(null);
       setBackgroundRemovalError(null);
       setEnhancedImagePreview(null);
+      setEnhancedImageData(null);
+      setEnhancedImageMimeType(null);
       setEnhanceImageError(null);
       setEnhancedImageFromBackground(false);
       setGenerated(null);
@@ -107,7 +139,14 @@ export default function Home() {
 
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
+      const dataUrl = await blobToDataUrl(blob);
       setProcessedImagePreview(objectUrl);
+      setProcessedImageData(dataUrl.split(",")[1] || null);
+      setProcessedImageMimeType(blob.type || "image/png");
+      setEnhancedImagePreview(null);
+      setEnhancedImageData(null);
+      setEnhancedImageMimeType(null);
+      setEnhancedImageFromBackground(false);
     } catch (err) {
       setBackgroundRemovalError(
         err instanceof Error
@@ -165,7 +204,10 @@ export default function Home() {
 
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
+      const dataUrl = await blobToDataUrl(blob);
       setEnhancedImagePreview(objectUrl);
+      setEnhancedImageData(dataUrl.split(",")[1] || null);
+      setEnhancedImageMimeType(blob.type || "image/png");
       setEnhancedImageFromBackground(usedBackgroundResult);
     } catch (err) {
       setEnhanceImageError(
@@ -188,6 +230,14 @@ export default function Home() {
     setError(null);
 
     try {
+      const selectedImage = enhancedImageData
+        ? { data: enhancedImageData, mimeType: enhancedImageMimeType }
+        : processedImageData
+          ? { data: processedImageData, mimeType: processedImageMimeType }
+          : imageData
+            ? { data: imageData, mimeType: imageMimeType }
+            : null;
+
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: {
@@ -198,9 +248,7 @@ export default function Home() {
           category: category.trim() || "General",
           features,
           marketplace,
-          image: imageData
-            ? { data: imageData, mimeType: imageMimeType }
-            : null,
+          image: selectedImage,
         }),
       });
 
@@ -395,6 +443,10 @@ export default function Home() {
                       >
                         {enhanceImageLoading ? "Enhancing Image..." : "Enhance Image"}
                       </button>
+                    </div>
+
+                    <div className="rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-300">
+                      AI will analyze: {aiImageLabel}
                     </div>
 
                     {backgroundRemovalError ? (
