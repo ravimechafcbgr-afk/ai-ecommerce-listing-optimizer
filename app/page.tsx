@@ -24,6 +24,14 @@ export default function Home() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageData, setImageData] = useState<string | null>(null);
   const [imageMimeType, setImageMimeType] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [removeBackgroundLoading, setRemoveBackgroundLoading] = useState(false);
+  const [backgroundRemovalError, setBackgroundRemovalError] = useState<string | null>(null);
+  const [processedImagePreview, setProcessedImagePreview] = useState<string | null>(null);
+  const [enhanceImageLoading, setEnhanceImageLoading] = useState(false);
+  const [enhanceImageError, setEnhanceImageError] = useState<string | null>(null);
+  const [enhancedImagePreview, setEnhancedImagePreview] = useState<string | null>(null);
+  const [enhancedImageFromBackground, setEnhancedImageFromBackground] = useState(false);
 
   function handleImageChange(file: File | undefined) {
     if (!file) {
@@ -47,9 +55,15 @@ export default function Home() {
         return;
       }
 
+      setImageFile(file);
       setImagePreview(reader.result);
       setImageData(reader.result.split(",")[1] || null);
       setImageMimeType(file.type);
+      setProcessedImagePreview(null);
+      setBackgroundRemovalError(null);
+      setEnhancedImagePreview(null);
+      setEnhanceImageError(null);
+      setEnhancedImageFromBackground(false);
       setGenerated(null);
       setError(null);
     };
@@ -57,6 +71,111 @@ export default function Home() {
       setError("Unable to read that image. Please try another file.");
     };
     reader.readAsDataURL(file);
+  }
+
+  async function removeBackground() {
+    if (!imageFile) {
+      return;
+    }
+
+    setRemoveBackgroundLoading(true);
+    setBackgroundRemovalError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("image_file", imageFile);
+
+      const response = await fetch("/api/remove-background", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let errorMessage = "Unable to remove the background right now.";
+
+        try {
+          const data = (await response.json()) as { error?: string };
+          if (data?.error) {
+            errorMessage = data.error;
+          }
+        } catch {
+          // The API may return a binary file or a non-JSON error payload.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      setProcessedImagePreview(objectUrl);
+    } catch (err) {
+      setBackgroundRemovalError(
+        err instanceof Error
+          ? err.message
+          : "Unable to remove the background right now."
+      );
+    } finally {
+      setRemoveBackgroundLoading(false);
+    }
+  }
+
+  async function enhanceImage() {
+    if (!imageFile) {
+      return;
+    }
+
+    setEnhanceImageLoading(true);
+    setEnhanceImageError(null);
+
+    try {
+      let fileToEnhance: File = imageFile;
+      let usedBackgroundResult = false;
+
+      if (processedImagePreview) {
+        const processedImageResponse = await fetch(processedImagePreview);
+        const processedImageBlob = await processedImageResponse.blob();
+        fileToEnhance = new File([processedImageBlob], "product-background-removed.png", {
+          type: processedImageBlob.type || "image/png",
+        });
+        usedBackgroundResult = true;
+      }
+
+      const formData = new FormData();
+      formData.append("image_file", fileToEnhance);
+
+      const response = await fetch("/api/enhance-image", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let errorMessage = "Unable to enhance the image right now.";
+
+        try {
+          const data = (await response.json()) as { error?: string };
+          if (data?.error) {
+            errorMessage = data.error;
+          }
+        } catch {
+          // Ignore JSON parsing errors and fall back to the default message.
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      setEnhancedImagePreview(objectUrl);
+      setEnhancedImageFromBackground(usedBackgroundResult);
+    } catch (err) {
+      setEnhanceImageError(
+        err instanceof Error
+          ? err.message
+          : "Unable to enhance the image right now."
+      );
+    } finally {
+      setEnhanceImageLoading(false);
+    }
   }
 
   async function generateListing() {
@@ -249,12 +368,132 @@ export default function Home() {
                 </label>
 
                 {imagePreview ? (
-                  <div className="mt-3 overflow-hidden rounded-xl border border-white/10 bg-slate-900">
-                    <img
-                      src={imagePreview}
-                      alt="Selected product"
-                      className="max-h-48 w-full object-contain"
-                    />
+                  <div className="mt-3 space-y-3">
+                    <div className="overflow-hidden rounded-xl border border-white/10 bg-slate-900">
+                      <img
+                        src={imagePreview}
+                        alt="Selected product"
+                        className="max-h-48 w-full object-contain"
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={removeBackground}
+                        disabled={removeBackgroundLoading}
+                        className="rounded-xl border border-blue-400/40 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-300 transition hover:bg-blue-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {removeBackgroundLoading ? "Removing Background..." : "Remove Background"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={enhanceImage}
+                        disabled={enhanceImageLoading}
+                        className="rounded-xl border border-violet-400/40 bg-violet-500/10 px-4 py-2 text-sm font-medium text-violet-300 transition hover:bg-violet-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {enhanceImageLoading ? "Enhancing Image..." : "Enhance Image"}
+                      </button>
+                    </div>
+
+                    {backgroundRemovalError ? (
+                      <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                        {backgroundRemovalError}
+                      </div>
+                    ) : null}
+
+                    {enhanceImageError ? (
+                      <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                        {enhanceImageError}
+                      </div>
+                    ) : null}
+
+                    {processedImagePreview ? (
+                      <div className="rounded-xl border border-white/10 bg-slate-900 p-3">
+                        <div className="mb-3 text-sm font-medium text-slate-300">
+                          Background removed preview
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="overflow-hidden rounded-lg border border-white/10 bg-slate-950 p-2">
+                            <div className="mb-2 text-xs uppercase tracking-wide text-slate-500">
+                              Original
+                            </div>
+                            <img
+                              src={imagePreview}
+                              alt="Original product"
+                              className="max-h-40 w-full object-contain"
+                            />
+                          </div>
+
+                          <div className="overflow-hidden rounded-lg border border-white/10 bg-slate-950 p-2">
+                            <div className="mb-2 text-xs uppercase tracking-wide text-slate-500">
+                              Result
+                            </div>
+                            <img
+                              src={processedImagePreview}
+                              alt="Background removed product"
+                              className="max-h-40 w-full object-contain"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-3 flex justify-end">
+                          <a
+                            href={processedImagePreview}
+                            download="product-no-background.png"
+                            className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-400"
+                          >
+                            Download PNG
+                          </a>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {enhancedImagePreview ? (
+                      <div className="rounded-xl border border-white/10 bg-slate-900 p-3">
+                        <div className="mb-3 text-sm font-medium text-slate-300">
+                          {enhancedImageFromBackground
+                            ? "Enhanced After Background Removal"
+                            : "Enhanced preview"}
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="overflow-hidden rounded-lg border border-white/10 bg-slate-950 p-2">
+                            <div className="mb-2 text-xs uppercase tracking-wide text-slate-500">
+                              Original
+                            </div>
+                            <img
+                              src={imagePreview}
+                              alt="Original product"
+                              className="max-h-40 w-full object-contain"
+                            />
+                          </div>
+
+                          <div className="overflow-hidden rounded-lg border border-white/10 bg-slate-950 p-2">
+                            <div className="mb-2 text-xs uppercase tracking-wide text-slate-500">
+                              Enhanced Result
+                            </div>
+                            <img
+                              src={enhancedImagePreview}
+                              alt="Enhanced product"
+                              className="max-h-40 w-full object-contain"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-3 flex justify-end">
+                          <a
+                            href={enhancedImagePreview}
+                            download="product-enhanced.png"
+                            className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-400"
+                          >
+                            Download Enhanced Image
+                          </a>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
