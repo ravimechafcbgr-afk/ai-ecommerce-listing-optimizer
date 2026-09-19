@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { NextRequest } from "next/server";
+import { getAuthenticatedUser, refundCredits, reserveCredits } from "@/lib/credits/server";
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 const ACCEPTED_IMAGE_TYPES = new Set([
@@ -91,6 +92,8 @@ function sanitizeEnhancementError(error: unknown) {
 }
 
 export async function POST(request: NextRequest) {
+  let refund: (() => Promise<void>) | null = null;
+
   try {
     const formData = await request.formData();
     const imageFile = await resolveImageFile(formData);
@@ -117,6 +120,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const { supabase, user } = await getAuthenticatedUser();
+    if (!user) {
+      return Response.json(
+        { error: "Please sign in to enhance the image." },
+        { status: 401 }
+      );
+    }
+
+    const creditReservation = await reserveCredits(
+      supabase,
+      2,
+      "enhance_image",
+      { fileName: imageFile.name }
+    );
+
+    if (!creditReservation) {
+      return Response.json(
+        { error: "You need 2 credits to enhance the image." },
+        { status: 402 }
+      );
+    }
+
+    refund = () =>
+      refundCredits(supabase, 2, "refund_failed_image_enhancement", {
+        fileName: imageFile.name,
+      });
+
     const imageBuffer = Buffer.from(await imageFile.arrayBuffer());
 
     const enhancedImage = await sharp(imageBuffer)
@@ -132,6 +162,7 @@ export async function POST(request: NextRequest) {
       .png({ compressionLevel: 8, quality: 92, palette: false })
       .toBuffer();
 
+    refund = null;
     return new Response(enhancedImage, {
       status: 200,
       headers: {
@@ -140,6 +171,10 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (refund) {
+      await refund();
+    }
+
     return Response.json(
       {
         error: sanitizeEnhancementError(error),

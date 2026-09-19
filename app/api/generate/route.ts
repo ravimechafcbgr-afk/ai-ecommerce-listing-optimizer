@@ -1,3 +1,5 @@
+import { getAuthenticatedUser, refundCredits, reserveCredits } from "@/lib/credits/server";
+
 export type ListingResponse = {
   title: string;
   bullets: string[];
@@ -199,6 +201,8 @@ function calculateScore({
 }
 
 export async function POST(request: Request) {
+  let refund: (() => Promise<void>) | null = null;
+
   try {
     const body = await request.json();
     const productName = normalizeText(body?.productName, "");
@@ -221,6 +225,35 @@ export async function POST(request: Request) {
         { status: 500 }
       );
     }
+
+    const { supabase, user } = await getAuthenticatedUser();
+    if (!user) {
+      return Response.json(
+        { error: "Please sign in to generate a listing." },
+        { status: 401 }
+      );
+    }
+
+    const creditCost = image ? 2 : 1;
+    const creditReservation = await reserveCredits(
+      supabase,
+      creditCost,
+      image ? "generate_listing_with_image" : "generate_listing",
+      { productName, marketplace }
+    );
+
+    if (!creditReservation) {
+      return Response.json(
+        { error: `You need ${creditCost} credit${creditCost === 1 ? "" : "s"} to generate this listing.` },
+        { status: 402 }
+      );
+    }
+
+    refund = () =>
+      refundCredits(supabase, creditCost, "refund_failed_listing_generation", {
+        productName,
+        marketplace,
+      });
 
     const features = featureInput
       .split(/\n+/)
@@ -357,8 +390,13 @@ Rules:
       }),
     };
 
+    refund = null;
     return Response.json(listing);
   } catch (error) {
+    if (refund) {
+      await refund();
+    }
+
     console.error(
       "Listing generation failed:",
       error instanceof Error ? error.message : "Unknown error"

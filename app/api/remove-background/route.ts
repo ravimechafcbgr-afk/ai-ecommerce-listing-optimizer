@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { getAuthenticatedUser, refundCredits, reserveCredits } from "@/lib/credits/server";
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 const ACCEPTED_IMAGE_TYPES = new Set([
@@ -82,6 +83,8 @@ async function resolveImageFile(formData: FormData) {
 }
 
 export async function POST(request: NextRequest) {
+  let refund: (() => Promise<void>) | null = null;
+
   try {
     const formData = await request.formData();
     const imageFile = await resolveImageFile(formData);
@@ -107,6 +110,33 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    const { supabase, user } = await getAuthenticatedUser();
+    if (!user) {
+      return Response.json(
+        { error: "Please sign in to remove the background." },
+        { status: 401 }
+      );
+    }
+
+    const creditReservation = await reserveCredits(
+      supabase,
+      2,
+      "remove_background",
+      { fileName: imageFile.name }
+    );
+
+    if (!creditReservation) {
+      return Response.json(
+        { error: "You need 2 credits to remove the background." },
+        { status: 402 }
+      );
+    }
+
+    refund = () =>
+      refundCredits(supabase, 2, "refund_failed_background_removal", {
+        fileName: imageFile.name,
+      });
 
     const apiKey = (process.env.REMOVE_BG_API_KEY ?? "").trim();
     if (!apiKey) {
@@ -161,6 +191,7 @@ export async function POST(request: NextRequest) {
     const processedImage = await removeBgResponse.arrayBuffer();
     const outputImage = Buffer.from(processedImage);
 
+    refund = null;
     return new Response(outputImage, {
       status: 200,
       headers: {
@@ -169,6 +200,10 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (refund) {
+      await refund();
+    }
+
     console.error("Background removal failed:", error);
 
     return Response.json(

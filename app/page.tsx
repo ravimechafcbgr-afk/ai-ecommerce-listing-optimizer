@@ -1,9 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import AuthPanel from "@/app/components/AuthPanel";
+import PricingSection from "@/app/components/PricingSection";
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+function notifyCreditsUpdated() {
+  window.dispatchEvent(new Event("listingai:credits-updated"));
+}
 
 type Listing = {
   title: string;
@@ -140,6 +146,7 @@ export default function Home() {
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
       const dataUrl = await blobToDataUrl(blob);
+      notifyCreditsUpdated();
       setProcessedImagePreview(objectUrl);
       setProcessedImageData(dataUrl.split(",")[1] || null);
       setProcessedImageMimeType(blob.type || "image/png");
@@ -205,6 +212,7 @@ export default function Home() {
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
       const dataUrl = await blobToDataUrl(blob);
+      notifyCreditsUpdated();
       setEnhancedImagePreview(objectUrl);
       setEnhancedImageData(dataUrl.split(",")[1] || null);
       setEnhancedImageMimeType(blob.type || "image/png");
@@ -265,6 +273,7 @@ export default function Home() {
         keywords: data.keywords || "",
         score: typeof data.score === "number" ? data.score : 0,
       });
+      notifyCreditsUpdated();
     } catch (err) {
       setGenerated(null);
       setError(
@@ -292,8 +301,17 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300">
-            AI-powered
+          <div className="flex items-center gap-3">
+            <a
+              href="#pricing"
+              className="hidden rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 transition hover:border-blue-400/50 hover:text-white sm:block"
+            >
+              Pricing
+            </a>
+            <div className="hidden rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 sm:block">
+              AI-powered
+            </div>
+            <AuthPanel />
           </div>
         </div>
       </header>
@@ -657,6 +675,8 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      <PricingSection />
 
       {/* Benefits */}
       <section className="border-t border-white/10 bg-slate-900/50">
