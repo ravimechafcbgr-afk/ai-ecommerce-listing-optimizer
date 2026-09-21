@@ -10,6 +10,7 @@ export default function AuthPanel() {
   const [supabase] = useState(() => createSupabaseBrowserClient());
   const [user, setUser] = useState<User | null>(null);
   const [credits, setCredits] = useState<number | null>(null);
+  const [plan, setPlan] = useState("free");
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -43,6 +44,7 @@ export default function AuthPanel() {
   useEffect(() => {
     if (!user) {
       setCredits(null);
+      setPlan("free");
       return;
     }
 
@@ -50,9 +52,10 @@ export default function AuthPanel() {
 
     async function loadCredits() {
       const response = await fetch("/api/credits");
-      const data = (await response.json()) as { credits?: number | null };
+      const data = (await response.json()) as { credits?: number | null; plan?: string };
       if (active && typeof data.credits === "number") {
         setCredits(data.credits);
+        setPlan(data.plan ?? "free");
       }
     }
 
@@ -122,6 +125,9 @@ export default function AuthPanel() {
         </span>
         <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-sm text-emerald-300">
           {credits === null ? "Credits..." : `${credits} credits`}
+        </span>
+        <span className="hidden rounded-full border border-blue-400/20 bg-blue-400/10 px-3 py-2 text-sm capitalize text-blue-300 sm:block">
+          {plan}
         </span>
         <button
           type="button"

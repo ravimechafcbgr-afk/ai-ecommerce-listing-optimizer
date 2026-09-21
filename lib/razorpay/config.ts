@@ -19,3 +19,25 @@ export function getCreditPack(productId: unknown) {
 
   return CREDIT_PACKS[productId as CreditPackId] ?? null;
 }
+
+export type PlanId = "starter" | "pro";
+
+export type OneTimePlan = {
+  id: PlanId;
+  name: string;
+  amountRupees: number;
+  credits: number;
+};
+
+export const ONE_TIME_PLANS: Record<PlanId, OneTimePlan> = {
+  starter: { id: "starter", name: "Starter", amountRupees: 299, credits: 50 },
+  pro: { id: "pro", name: "Pro", amountRupees: 699, credits: 200 },
+};
+
+export function getOneTimePlan(planId: unknown) {
+  if (typeof planId !== "string") {
+    return null;
+  }
+
+  return ONE_TIME_PLANS[planId as PlanId] ?? null;
+}

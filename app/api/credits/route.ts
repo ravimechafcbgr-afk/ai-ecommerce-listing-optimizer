@@ -17,7 +17,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("profiles")
-    .select("credits")
+    .select("credits, plan")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -28,5 +28,5 @@ export async function GET() {
     );
   }
 
-  return Response.json({ authenticated: true, credits: data.credits });
+  return Response.json({ authenticated: true, credits: data.credits, plan: data.plan ?? "free" });
 }

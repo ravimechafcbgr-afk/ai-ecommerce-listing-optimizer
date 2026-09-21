@@ -1,5 +1,5 @@
 import { getAuthenticatedUser } from "@/lib/credits/server";
-import { getCreditPack } from "@/lib/razorpay/config";
+import { getCreditPack, getOneTimePlan } from "@/lib/razorpay/config";
 import { getRazorpayClient } from "@/lib/razorpay/server";
 
 export async function POST(request: Request) {
@@ -10,20 +10,25 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => null);
+    const plan = getOneTimePlan(body?.planId);
     const pack = getCreditPack(body?.productId);
-    if (!pack) {
-      return Response.json({ error: "That credit pack is not available." }, { status: 400 });
+    if (!plan && !pack) {
+      return Response.json({ error: "That payment product is not available." }, { status: 400 });
     }
+
+    const productId = plan?.id ?? pack?.id;
+    const amountRupees = plan?.amountRupees ?? pack?.amountRupees;
+    const credits = plan?.credits ?? pack?.credits;
 
     const { keyId, client } = getRazorpayClient();
     const order = await client.orders.create({
-      amount: pack.amountRupees * 100,
+      amount: amountRupees! * 100,
       currency: "INR",
       receipt: `listingai_${user.id.slice(0, 8)}_${Date.now()}`,
       notes: {
-        product_id: pack.id,
+        product_id: productId!,
         user_id: user.id,
-        credits: String(pack.credits),
+        credits: String(credits),
       },
     });
 

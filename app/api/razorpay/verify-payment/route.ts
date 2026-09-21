@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { getAuthenticatedUser } from "@/lib/credits/server";
-import { getCreditPack } from "@/lib/razorpay/config";
+import { getCreditPack, getOneTimePlan } from "@/lib/razorpay/config";
 import { getRazorpayClient } from "@/lib/razorpay/server";
 
 function isValidSignature(orderId: string, paymentId: string, signature: string) {
@@ -31,6 +31,7 @@ export async function POST(request: Request) {
     const orderId = typeof body?.razorpay_order_id === "string" ? body.razorpay_order_id : "";
     const paymentId = typeof body?.razorpay_payment_id === "string" ? body.razorpay_payment_id : "";
     const signature = typeof body?.razorpay_signature === "string" ? body.razorpay_signature : "";
+    const planId = typeof body?.planId === "string" ? body.planId : "";
 
     if (!orderId || !paymentId || !signature || !isValidSignature(orderId, paymentId, signature)) {
       return Response.json({ error: "Invalid payment signature." }, { status: 400 });
@@ -40,7 +41,43 @@ export async function POST(request: Request) {
     const order = await client.orders.fetch(orderId);
     const payment = await client.payments.fetch(paymentId);
     const productId = order.notes?.product_id;
+    const plan = getOneTimePlan(planId);
     const pack = getCreditPack(productId);
+
+    if (planId) {
+      if (!plan || order.notes?.product_id !== plan.id) {
+        return Response.json({ error: "Payment details could not be verified." }, { status: 400 });
+      }
+
+      if (
+        order.notes?.user_id !== user.id ||
+        order.currency !== "INR" ||
+        order.amount !== plan.amountRupees * 100 ||
+        payment.order_id !== orderId ||
+        payment.amount !== plan.amountRupees * 100 ||
+        payment.status !== "captured"
+      ) {
+        return Response.json({ error: "Payment details could not be verified." }, { status: 400 });
+      }
+
+      const result = await supabase.rpc("record_verified_plan_purchase", {
+        purchase_order_id: orderId,
+        purchase_payment_id: paymentId,
+        purchase_plan_id: plan.id,
+        purchase_amount_paise: order.amount,
+      });
+
+      if (result.error || !result.data?.ok) {
+        return Response.json({ error: "Payment verification could not be completed." }, { status: 409 });
+      }
+
+      return Response.json({
+        success: true,
+        duplicate: result.data.duplicate === true,
+        plan: result.data.plan,
+        credits: result.data.credits,
+      });
+    }
 
     if (
       !pack ||

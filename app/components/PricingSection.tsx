@@ -4,18 +4,18 @@ import { useState } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type RazorpayCheckoutResponse = {
-  razorpay_order_id: string;
+  razorpay_order_id?: string;
   razorpay_payment_id: string;
   razorpay_signature: string;
 };
 
 type RazorpayOptions = {
   key: string;
-  amount: number;
-  currency: string;
   name: string;
   description: string;
-  order_id: string;
+  amount?: number;
+  currency?: string;
+  order_id?: string;
   prefill?: { email?: string };
   theme?: { color?: string };
   handler: (response: RazorpayCheckoutResponse) => void;
@@ -49,7 +49,7 @@ const plans: Plan[] = [
   {
     name: "Starter",
     price: "₹299",
-    cadence: "/month",
+    cadence: "one-time",
     description: "More room for a steady listing workflow.",
     features: [
       "50 AI listing credits",
@@ -62,7 +62,7 @@ const plans: Plan[] = [
   {
     name: "Pro",
     price: "₹699",
-    cadence: "/month",
+    cadence: "one-time",
     description: "Built for a higher-volume catalog workflow.",
     features: [
       "200 AI listing credits",
@@ -196,9 +196,104 @@ export default function PricingSection() {
     }
   }
 
-  function showSubscriptionsComingSoon() {
+  async function startPlan(planId: "starter" | "pro", planLabel: string, credits: number) {
+    if (activePack) {
+      return;
+    }
+
+    setActivePack(planId);
+    setMessage(null);
     setError(null);
-    setMessage("Subscriptions coming next.");
+
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session?.user) {
+        throw new Error("Please sign in before upgrading your plan.");
+      }
+
+      const orderResponse = await fetch("/api/razorpay/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planId }),
+      });
+      const orderData = (await orderResponse.json()) as {
+        orderId?: string;
+        amount?: number;
+        currency?: string;
+        keyId?: string;
+        error?: string;
+      };
+
+      if (!orderResponse.ok || !orderData.orderId || !orderData.amount || !orderData.keyId) {
+        throw new Error(orderData.error || "Unable to start the payment right now.");
+      }
+
+      await loadRazorpayScript();
+      if (!window.Razorpay) {
+        throw new Error("Razorpay Checkout is unavailable right now.");
+      }
+
+      const checkout = new window.Razorpay({
+        key: orderData.keyId,
+        amount: orderData.amount,
+        currency: orderData.currency || "INR",
+        name: "ListingAI",
+        description: `${planLabel} plan`,
+        order_id: orderData.orderId,
+        prefill: { email: data.session.user.email ?? undefined },
+        theme: { color: "#3b82f6" },
+        handler: (response) => {
+          void verifyPlanPayment(response, planLabel, credits);
+        },
+        modal: {
+          ondismiss: () => {
+            setActivePack(null);
+            setError("Payment checkout was cancelled.");
+          },
+        },
+      });
+
+      checkout.open();
+    } catch (checkoutError) {
+      setError(checkoutError instanceof Error ? checkoutError.message : "Unable to start the payment right now.");
+      setActivePack(null);
+    }
+  }
+
+  async function verifyPlanPayment(response: RazorpayCheckoutResponse, planLabel: string, credits: number) {
+    try {
+      if (!response.razorpay_order_id || !response.razorpay_payment_id || !response.razorpay_signature) {
+        throw new Error("Payment verification failed.");
+      }
+
+      const verificationResponse = await fetch("/api/razorpay/verify-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          razorpay_order_id: response.razorpay_order_id,
+          razorpay_payment_id: response.razorpay_payment_id,
+          razorpay_signature: response.razorpay_signature,
+          planId: planLabel.toLowerCase(),
+        }),
+      });
+      const data = (await verificationResponse.json()) as {
+        success?: boolean;
+        duplicate?: boolean;
+        error?: string;
+      };
+
+      if (!verificationResponse.ok || !data.success) {
+        throw new Error(data.error || "Payment verification failed.");
+      }
+
+      setMessage(`Payment successful — ${planLabel} plan activated with ${credits} credits.`);
+      setError(null);
+      window.dispatchEvent(new Event("listingai:credits-updated"));
+    } catch (verificationError) {
+      setError(verificationError instanceof Error ? verificationError.message : "Payment verification failed.");
+    } finally {
+      setActivePack(null);
+    }
   }
 
   return (
@@ -269,17 +364,26 @@ export default function PricingSection() {
 
               <button
                 type="button"
-                onClick={plan.highlighted || plan.name === "Starter" ? showSubscriptionsComingSoon : undefined}
-                disabled={plan.name === "Free"}
+                onClick={() => {
+                  if (plan.name === "Starter") {
+                    void startPlan("starter", "Starter", 50);
+                    return;
+                  }
+
+                  if (plan.name === "Pro") {
+                    void startPlan("pro", "Pro", 200);
+                  }
+                }}
+                disabled={plan.name === "Free" || activePack !== null}
                 className={`mt-8 w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${
                   plan.name === "Free"
                     ? "cursor-default border border-white/10 bg-white/5 text-slate-500"
                     : plan.highlighted
                       ? "bg-blue-500 text-white hover:bg-blue-400"
                       : "border border-blue-400/40 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20"
-                }`}
+                } ${activePack !== null ? "cursor-not-allowed opacity-70" : ""}`}
               >
-                {plan.action}
+                {plan.name === "Free" ? plan.action : activePack === "starter" && plan.name === "Starter" ? "Opening..." : activePack === "pro" && plan.name === "Pro" ? "Opening..." : plan.action}
               </button>
             </article>
           ))}
