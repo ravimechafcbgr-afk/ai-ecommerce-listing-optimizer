@@ -85,6 +85,7 @@ export async function POST(request: Request) {
       order.currency !== "INR" ||
       order.amount !== pack.amountRupees * 100 ||
       payment.order_id !== orderId ||
+      payment.amount !== pack.amountRupees * 100 ||
       payment.status !== "captured"
     ) {
       return Response.json({ error: "Payment details could not be verified." }, { status: 400 });

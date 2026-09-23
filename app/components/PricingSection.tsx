@@ -160,10 +160,13 @@ export default function PricingSection() {
         prefill: { email: data.session.user.email ?? undefined },
         theme: { color: "#3b82f6" },
         handler: (response) => {
-          void verifyPayment(response);
+          void verifyPayment(response, label);
         },
         modal: {
-          ondismiss: () => setActivePack(null),
+          ondismiss: () => {
+            setActivePack(null);
+            setError("Payment checkout was cancelled.");
+          },
         },
       });
 
@@ -174,7 +177,7 @@ export default function PricingSection() {
     }
   }
 
-  async function verifyPayment(response: RazorpayCheckoutResponse) {
+  async function verifyPayment(response: RazorpayCheckoutResponse, label: string) {
     try {
       const verificationResponse = await fetch("/api/razorpay/verify-payment", {
         method: "POST",
@@ -187,7 +190,8 @@ export default function PricingSection() {
         throw new Error(data.error || "Payment verification failed.");
       }
 
-      setMessage("Payment verified. Your credits have been added.");
+      setMessage(`Payment successful — ${label} added.`);
+      setError(null);
       window.dispatchEvent(new Event("listingai:credits-updated"));
     } catch (verificationError) {
       setError(verificationError instanceof Error ? verificationError.message : "Payment verification failed.");
